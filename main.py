@@ -1,119 +1,176 @@
 import logging
-from flask import Flask
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler,
+    MessageHandler, filters, ContextTypes, ConversationHandler
+)
+from flask import Flask
+import aiohttp
 import threading
+import asyncio
 
-# ================= CONFIG =================
+# ========================
+# CONFIG
+# ========================
 TOKEN = "8099027155:AAH7HApppZgqHq1uAHgt7HlUNldVl-f8-Rc"
-ADMIN_ID = 7974169540
+BOT_USERNAME = "@YourBotUsername"  # replace with your bot username
 GROUP_LINK = "https://t.me/onlineworksfutur"
+ADMIN_ID = 7974169540
+PING_URL = "https://replit.com/@mequantmeh/bot"  # can keep for uptime
 
-# ================= DATA STORAGE =================
-user_balances = {}   # user_id -> balance (birr)
-user_referrals = {}  # user_id -> referral count
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 
-# ================= FLASK SERVER =================
-app = Flask(__name__)
+# ========================
+# DATA STORAGE
+# ========================
+user_data = {}
+added_members = {}  # track how many people each user added to the group
+balances = {}
+withdraw_requests = []
 
-@app.route('/')
-def home():
-    return "Bot is running!"
+# ========================
+# CONSTANTS
+# ========================
+BROADCAST = range(1)
 
-# ================= TELEGRAM BOT =================
-logging.basicConfig(level=logging.INFO)
-
+# ========================
+# START COMMAND
+# ========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_data[user.id] = {"name": user.first_name}
+    
+    keyboard = [
+        [InlineKeyboardButton("🚀 Join Group", url=GROUP_LINK)],
+        [InlineKeyboardButton("👥 My Added Members & Balance", callback_data="referrals")],
+        [InlineKeyboardButton("💰 Withdraw", callback_data="withdraw")],
+        [InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")]
+    ]
+    if user.id == ADMIN_ID:
+        keyboard.append([InlineKeyboardButton("🛠 Admin Panel", callback_data="admin")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Admin view
-    if user_id == ADMIN_ID:
-        keyboard = [[InlineKeyboardButton("📢 Broadcast", callback_data="broadcast")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("👋 Welcome Admin! Use your panel below:", reply_markup=reply_markup)
+    welcome_text = (
+        f"👋 **Welcome {user.first_name}! እንኳን ደህና መጡ!**\n\n"
+        f"👉 Add your friends to this group and earn money.\n"
+        f"👉 ወዳጆችህን ወደ group ጨምር እና ገንዘብ ያሸምቱ።\n\n"
+        f"Share your referral link: {BOT_USERNAME}?start={user.id}"
+    )
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
 
-    else:
-        keyboard = [
-            [InlineKeyboardButton("➕ Add Friends", url=GROUP_LINK)],
-            [InlineKeyboardButton("💰 Withdraw", callback_data="withdraw")],
-            [InlineKeyboardButton("👥 My Referrals", callback_data="referrals")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        # Send welcome text
-        await update.message.reply_text(
-            "👋 ሰላም! Welcome!\n\n"
-            "📢 Add your friends to the group and earn money!\n"
-            "💵 You get paid for every member you bring.\n\n"
-            "🇬🇧 Invite friends → Earn 100 birr minimum to withdraw.\n"
-            "🇪🇹 ጓደኞችህን አክል → ከ100 ብር በላይ ለመሰረጥ ትችላለህ።",
-            reply_markup=reply_markup
-        )
-
-    # Initialize user balances if new
-    if user_id not in user_balances:
-        user_balances[user_id] = 0
-    if user_id not in user_referrals:
-        user_referrals[user_id] = 0
-
+# ========================
+# BUTTON HANDLER
+# ========================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
 
-    # Withdraw button
-    if query.data == "withdraw":
-        balance = user_balances.get(user_id, 0)
-        if balance >= 100:
-            await context.bot.send_message(
-                ADMIN_ID, f"💵 Withdraw request from {user_id}, Balance: {balance} birr"
-            )
-            await query.edit_message_text("✅ Withdraw request sent to admin.")
+    if query.data == "referrals":
+        count = added_members.get(user_id, 0)
+        balance = balances.get(user_id, 0)
+        text = f"👥 Added Members: {count}\n💰 Balance: {balance} birr"
+        await query.edit_message_text(text, reply_markup=query.message.reply_markup)
+
+    elif query.data == "withdraw":
+        balance = balances.get(user_id, 0)
+        if balance >= 100:  # minimum withdrawal
+            balances[user_id] -= balance
+            withdraw_requests.append((user_id, balance))
+            text = f"💵 Withdrawal request sent to admin for {balance} birr."
         else:
-            needed = 100 - balance
-            await query.edit_message_text(
-                f"⚠️ You need at least 100 birr to withdraw.\n"
-                f"💰 Your balance: {balance} birr\n"
-                f"➕ You need {needed} more birr to withdraw."
-            )
+            text = f"❌ You need {100 - balance} birr more to withdraw."
+        await query.edit_message_text(text, reply_markup=query.message.reply_markup)
 
-    # Referral button
-    elif query.data == "referrals":
-        count = user_referrals.get(user_id, 0)
-        await query.edit_message_text(f"👥 You have {count} referrals.")
+    elif query.data == "leaderboard":
+        lb = sorted(balances.items(), key=lambda x: x[1], reverse=True)[:5]
+        leaderboard_text = "🏆 **Top 5 Users** 🏆\n\n"
+        for i, (uid, bal) in enumerate(lb, start=1):
+            leaderboard_text += f"{i}. {user_data.get(uid, {}).get('name', 'Unknown')} - {bal} birr\n"
+        await query.edit_message_text(leaderboard_text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
 
-    # Admin broadcast
+    elif query.data == "admin" and user_id == ADMIN_ID:
+        keyboard = [
+            [InlineKeyboardButton("📢 Broadcast Message", callback_data="broadcast")],
+            [InlineKeyboardButton("📊 View Leaderboard", callback_data="leaderboard")]
+        ]
+        await query.edit_message_text("🛠 **Admin Panel**", parse_mode="Markdown",
+                                      reply_markup=InlineKeyboardMarkup(keyboard))
+
     elif query.data == "broadcast" and user_id == ADMIN_ID:
-        await update.callback_query.message.reply_text("✍️ Send the message you want to broadcast:")
-        return "BROADCAST"
+        await query.edit_message_text("✍️ Send the message you want to broadcast:")
+        return BROADCAST
 
+    else:
+        await query.edit_message_text("❌ This option is not available.")
+
+# ========================
+# BROADCAST
+# ========================
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     count = 0
-    for uid in user_balances.keys():
+    for uid in user_data.keys():
         try:
             await context.bot.send_message(chat_id=uid, text=f"📢 Broadcast:\n\n{text}")
             count += 1
         except:
             continue
     await update.message.reply_text(f"✅ Message sent to {count} users.")
-    return -1
+    return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Broadcast canceled.")
-    return -1
+    return ConversationHandler.END
 
-# ================= MAIN FUNCTION =================
-def run_bot():
+# ========================
+# SELF PING
+# ========================
+async def ping_job(context: ContextTypes.DEFAULT_TYPE):
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(PING_URL) as resp:
+                logging.info(f"Pinged {PING_URL}, status {resp.status}")
+        except Exception as e:
+            logging.error(f"Ping failed: {e}")
+
+# ========================
+# FLASK SERVER
+# ========================
+app = Flask("")
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    app.run(host="0.0.0.0", port=8080)
+
+# ========================
+# MAIN
+# ========================
+def main():
+    # Start Flask server in another thread
+    threading.Thread(target=run_flask).start()
+
+    # Telegram bot
     app_bot = Application.builder().token(TOKEN).build()
-
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CallbackQueryHandler(button_handler))
-    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message))
+    app_bot.add_handler(ConversationHandler(
+        entry_points=[CallbackQueryHandler(button_handler, pattern="broadcast")],
+        states={BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message)]},
+        fallbacks=[CommandHandler("cancel", cancel)]
+    ))
+
+    # Ping every 6 minutes
+    app_bot.job_queue.run_repeating(ping_job, interval=360, first=10)
 
     app_bot.run_polling()
 
-# ================= RUN BOTH BOT AND FLASK =================
 if __name__ == "__main__":
-    threading.Thread(target=run_bot).start()
-    app.run(host="0.0.0.0", port=10000)
+    main()
