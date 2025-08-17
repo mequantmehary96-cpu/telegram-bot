@@ -3,7 +3,6 @@ from flask import Flask
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import threading
-import os
 
 # ================= CONFIG =================
 TOKEN = "8099027155:AAH7HApppZgqHq1uAHgt7HlUNldVl-f8-Rc"
@@ -41,12 +40,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Send welcome image first
-        if os.path.exists("welcome.png"):
-            with open("welcome.png", "rb") as img:
-                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=img)
-
-        # Then send welcome text
+        # Send welcome text only
         await update.message.reply_text(
             "👋 ሰላም! Welcome!\n\n"
             "📢 Add your friends to the group and earn money!\n"
