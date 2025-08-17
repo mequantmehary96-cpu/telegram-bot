@@ -1,7 +1,7 @@
 import logging
 from flask import Flask
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 import threading
 
 # ================= CONFIG =================
@@ -40,7 +40,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Send welcome text only
+        # Send welcome text
         await update.message.reply_text(
             "👋 ሰላም! Welcome!\n\n"
             "📢 Add your friends to the group and earn money!\n"
@@ -50,11 +50,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
 
-        # Initialize user balances if new
-        if user_id not in user_balances:
-            user_balances[user_id] = 0
-        if user_id not in user_referrals:
-            user_referrals[user_id] = 0
+    # Initialize user balances if new
+    if user_id not in user_balances:
+        user_balances[user_id] = 0
+    if user_id not in user_referrals:
+        user_referrals[user_id] = 0
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -109,6 +109,8 @@ def run_bot():
 
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CallbackQueryHandler(button_handler))
+    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message))
+
     app_bot.run_polling()
 
 # ================= RUN BOTH BOT AND FLASK =================
