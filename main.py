@@ -1,6 +1,6 @@
 import logging
 from flask import Flask
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, InputFile
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import threading
 import os
@@ -90,7 +90,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Admin broadcast
     elif query.data == "broadcast" and user_id == ADMIN_ID:
-        await query.edit_message_text("✍️ Send the message you want to broadcast:")
+        await update.callback_query.message.reply_text("✍️ Send the message you want to broadcast:")
         return "BROADCAST"
 
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -115,14 +115,8 @@ def run_bot():
 
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CallbackQueryHandler(button_handler))
-    # Conversation handler for broadcast (simplified)
-    # For full broadcast conversation, can expand later
-    # app_bot.add_handler(ConversationHandler(
-    #     entry_points=[CallbackQueryHandler(button_handler, pattern="broadcast")],
-    #     states={"BROADCAST": [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message)]},
-    #     fallbacks=[CommandHandler("cancel", cancel)]
-    # ))
-
+    # For now, broadcast conversation handler simplified
+    # You can expand later if needed
     app_bot.run_polling()
 
 # ================= RUN BOTH BOT AND FLASK =================
