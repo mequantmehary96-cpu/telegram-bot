@@ -115,8 +115,6 @@ def run_bot():
 
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CallbackQueryHandler(button_handler))
-    # For now, broadcast conversation handler simplified
-    # You can expand later if needed
     app_bot.run_polling()
 
 # ================= RUN BOTH BOT AND FLASK =================
